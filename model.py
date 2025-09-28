@@ -22,7 +22,6 @@ class FNN(object):
     def __init__(self,
                  dims,
                  n_clusters=10,
-                 alpha=1.0,
                  batch_size=256):
 
         super(FNN, self).__init__()
@@ -32,11 +31,12 @@ class FNN(object):
         self.n_stacks = len(self.dims) - 1
 
         self.n_clusters = n_clusters
-        self.alpha = alpha
         self.batch_size = batch_size
         self.autoencoder = autoencoder(self.dims)
         self.class_labels = {0: 'negative', 1: 'positive'}
         self.stop_words = set()
+        self.gamma = None
+        self.eta = None
 
     def initialize_model(self, ae_weights=None, gamma=0.1, eta=1.0, optimizer=SGD(learning_rate=0.001, momentum=0.9)):
         if ae_weights is not None:
@@ -47,36 +47,32 @@ class FNN(object):
             print('    python FNN_1/model.py --ae_weights weights.h5')
             exit()
 
-        # Get the encoder part from autoencoder
+        self.gamma = gamma
+        self.eta = eta
+
         hidden = self.autoencoder.get_layer(name='encoder_%d' % (self.n_stacks - 1)).output
         self.encoder = Model(inputs=self.autoencoder.input, outputs=hidden)
         
-        # Define the sentiment classifier
-        hidden_size = self.dims[-1]  # Size of the bottleneck encoding
+        hidden_size = self.dims[-1]
         
-
         x = Dense(128)(hidden)
         x = BatchNormalization()(x)
-        x = Activation('relu')(x)  # Changed from gelu to 'relu'
+        x = Activation('relu')(x)
         x = Dropout(0.4)(x)
 
         x = Dense(32)(x)
         x = BatchNormalization()(x)
-        x = Activation('relu')(x)  # Changed from gelu to 'relu'
+        x = Activation('relu')(x)
         x = Dropout(0.4)(x)
         
         sentiment_output = Dense(2, activation='softmax', name='sentiment')(x)
         
-        # Create clustering layer
         clustering_layer = ClusteringLayer(self.n_clusters, name='clustering')(hidden)
         
-        # Create the combined model
         self.model = Model(inputs=self.autoencoder.input,
                           outputs=[clustering_layer, sentiment_output])
         
-        # Compile with multiple losses
         self.model.compile(loss={'clustering': 'kld', 'sentiment': 'categorical_crossentropy'},
-                          loss_weights=[gamma, eta],  # Balance between clustering and sentiment tasks
                           optimizer=optimizer)
 
     def load_weights(self, weights_path):
@@ -210,7 +206,7 @@ class FNN(object):
         
         return df_clusters
     
-    def pretrain_autoencoder(self, dataset, batch_size=256, epochs=200, optimizer='adam'):
+    def pretrain_autoencoder(self, dataset, batch_size=256, epochs=200, optimizer=' '):
   
         print('Pretraining autoencoder...')
         self.autoencoder.compile(optimizer=optimizer, loss='mse')
@@ -244,25 +240,14 @@ class FNN(object):
         return (weight.T / weight.sum(1)).T
 
     def compute_class_weights(self, y):
-        """
-        Compute class weights for imbalanced sentiment classes
-        
-        Args:
-            y: Sentiment labels (can be one-hot encoded or class indices)
-            
-        Returns:
-            Dictionary of class weights
-        """
         if len(y.shape) > 1:
             y_indices = np.argmax(y, axis=1)
         else:
             y_indices = y
             
-        # Calculate class distribution
         unique_classes, class_counts = np.unique(y_indices, return_counts=True)
         print(f"Class distribution: {dict(zip(unique_classes, class_counts))}")
         
-        # Compute balanced class weights
         class_weights = compute_class_weight('balanced', classes=unique_classes, y=y_indices)
         class_weight_dict = dict(zip(unique_classes, class_weights))
         
@@ -271,9 +256,6 @@ class FNN(object):
 
     def clustering_with_sentiment(self, dataset, tol=1e-3, update_interval=140, maxiter=2e4, 
                                  save_dir='./results/fnnjst'):
-        """
-        dataset: CachedBERTDataset instance containing texts and labels
-        """
         print('Update interval', update_interval)
         
         embeddings = []
@@ -296,7 +278,6 @@ class FNN(object):
             if len(y_sentiment.shape) == 1:
                 y_sentiment = to_categorical(y_sentiment, num_classes=2)
             
-            # Compute class weights for handling imbalanced classes
             sentiment_class_weights = self.compute_class_weights(y_sentiment)
         else:
             print("Warning: No labels found in dataset. Clustering only.")
@@ -326,20 +307,17 @@ class FNN(object):
         for ite in range(int(maxiter)):
             if ite % update_interval == 0:
                 q, s_pred = self.model.predict(x, verbose=0)
-                p = self.target_distribution(q)  # Update auxiliary target distribution
+                p = self.target_distribution(q)
                 
-                # Evaluate clustering performance
                 y_pred = q.argmax(1)
                 delta_label = np.sum(y_pred != y_pred_last).astype(np.float32) / y_pred.shape[0]
                 y_pred_last = y_pred
                 
-                # Compute sentiment prediction accuracy if labels available
                 if y_sentiment is not None:
                     s_pred_label = s_pred.argmax(1)
                     sentiment_true_label = y_sentiment.argmax(1) if len(y_sentiment.shape) > 1 else y_sentiment
                     acc_sentiment = np.sum(s_pred_label == sentiment_true_label).astype(np.float32) / s_pred_label.shape[0]
                     
-                    # Compute per-class accuracy to monitor imbalance effects
                     if len(np.unique(sentiment_true_label)) > 1:
                         for cls in np.unique(sentiment_true_label):
                             cls_mask = sentiment_true_label == cls
@@ -348,7 +326,6 @@ class FNN(object):
                 else:
                     acc_sentiment = 0
                 
-                # For now, we don't have ground truth cluster labels
                 acc_cluster = nmi = ari = 0
                 
                 loss = np.round(loss, 5)
@@ -357,39 +334,37 @@ class FNN(object):
                               L=loss[0], Lc=loss[1], Ls=loss[2])
                 logwriter.writerow(logdict)
                 print('Iter', ite,': Cluster Loss', loss[1], ', Sentiment Loss', loss[2] , ', Acc_sentiment', np.round(acc_sentiment, 5), '; loss=', loss)
-        
 
-                # Check stop criterion based on cluster stability
                 if ite > 0 and delta_label < tol:
                     print('delta_label ', delta_label, '< tol ', tol)
                     print('Reached tolerance threshold. Stopping training.')
                     logfile.close()
                     break
             
-            # Train on batch with class weights for sentiment
             if y_sentiment is not None:
                 if (index + 1) * self.batch_size > x.shape[0]:
                     batch_x = x[index * self.batch_size::]
                     batch_p = p[index * self.batch_size::]
                     batch_y_sentiment = y_sentiment[index * self.batch_size::]
                     
-                    # Apply class weights manually to sentiment loss
                     if sentiment_class_weights:
-                        # Get sample weights based on class labels
-                        sample_weights = np.ones(batch_y_sentiment.shape[0])
-                        for i, label in enumerate(np.argmax(batch_y_sentiment, axis=1)):
-                            sample_weights[i] = sentiment_class_weights[label]
-                            
-                        # Pass sample weights as a list - None for clustering, weights for sentiment
+                        cluster_weights = np.full(batch_p.shape[0], self.gamma)
+                        sentiment_weights = np.array([self.eta * sentiment_class_weights[label] 
+                                                     for label in np.argmax(batch_y_sentiment, axis=1)])
+                        
                         loss = self.model.train_on_batch(
                             x=batch_x,
                             y=[batch_p, batch_y_sentiment],
-                            sample_weight=[None, sample_weights]
+                            sample_weight=[cluster_weights, sentiment_weights]
                         )
                     else:
+                        cluster_weights = np.full(batch_p.shape[0], self.gamma)
+                        sentiment_weights = np.full(batch_y_sentiment.shape[0], self.eta)
+                        
                         loss = self.model.train_on_batch(
                             x=batch_x,
-                            y=[batch_p, batch_y_sentiment]
+                            y=[batch_p, batch_y_sentiment],
+                            sample_weight=[cluster_weights, sentiment_weights]
                         )
                     index = 0
                 else:
@@ -397,32 +372,31 @@ class FNN(object):
                     batch_p = p[index * self.batch_size:(index + 1) * self.batch_size]
                     batch_y_sentiment = y_sentiment[index * self.batch_size:(index + 1) * self.batch_size]
                     
-                    # Apply class weights manually to sentiment loss
                     if sentiment_class_weights:
-                        # Get sample weights based on class labels
-                        sample_weights = np.ones(batch_y_sentiment.shape[0])
-                        for i, label in enumerate(np.argmax(batch_y_sentiment, axis=1)):
-                            sample_weights[i] = sentiment_class_weights[label]
-                            
-                        # Pass sample weights as a list - None for clustering, weights for sentiment
+                        cluster_weights = np.full(batch_p.shape[0], self.gamma)
+                        sentiment_weights = np.array([self.eta * sentiment_class_weights[label] 
+                                                     for label in np.argmax(batch_y_sentiment, axis=1)])
+                        
                         loss = self.model.train_on_batch(
                             x=batch_x,
                             y=[batch_p, batch_y_sentiment],
-                            sample_weight=[None, sample_weights]
+                            sample_weight=[cluster_weights, sentiment_weights]
                         )
                     else:
+                        cluster_weights = np.full(batch_p.shape[0], self.gamma)
+                        sentiment_weights = np.full(batch_y_sentiment.shape[0], self.eta)
+                        
                         loss = self.model.train_on_batch(
                             x=batch_x,
-                            y=[batch_p, batch_y_sentiment]
+                            y=[batch_p, batch_y_sentiment],
+                            sample_weight=[cluster_weights, sentiment_weights]
                         )
                     index += 1
             
-            # Save intermediate model
             if ite % save_interval == 0:
                 print('saving model to:', save_dir + '/FNN_model_' + str(ite) + '.weights' + '.h5')
                 self.model.save_weights(save_dir + '/FNN_model_' + str(ite) + '.weights' + '.h5')
         
-        # Save the trained model
         logfile.close()
         print('saving model to:', save_dir + '/FNN_model_final.weights.h5')
         self.model.save_weights(save_dir + '/FNN_model_final.weights.h5')
