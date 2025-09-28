@@ -4,7 +4,7 @@ This project implements a **Fully Neural Network (FNN)** combined with **BERT em
 
 ## Model Architecture
 
-![FNN_Beta Architecture](architecture.png)
+![FNN_Beta Architecture](architecture.jpg)
 
 
 ## Installation and Setup
