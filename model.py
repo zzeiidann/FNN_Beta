@@ -254,7 +254,7 @@ class FNN(object):
         print(f"Computed class weights: {class_weight_dict}")
         return class_weight_dict
 
-    def clustering_with_sentiment(self, dataset, tol=1e-3, update_interval=140, maxiter=2e4, 
+    def train(self, dataset, tol=1e-3, update_interval=140, maxiter=2e4, 
                                  save_dir='./results/fnnjst'):
         print('Update interval', update_interval)
         
