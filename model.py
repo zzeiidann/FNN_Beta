@@ -338,7 +338,7 @@ class FNN(object):
                 print('Iter', ite,': Cluster Loss', loss[1], ', Sentiment Loss', loss[2] , ', Acc_sentiment', np.round(acc_sentiment, 5), '; loss=', loss)
                 print('')
                 print('')
-                
+
                 if ite > 0 and delta_label < tol:
                     print('delta_label ', delta_label, '< tol ', tol)
                     print('Reached tolerance threshold. Stopping training.')
@@ -405,4 +405,5 @@ class FNN(object):
         print('saving model to:', save_dir + '/FNN_model_final.weights.h5')
         self.model.save_weights(save_dir + '/FNN_model_final.weights.h5')
         
-        return y_pred, s_pred if y_sentiment is not None else y_pred
+        # return y_pred, s_pred if y_sentiment is not None else y_pred
+        return None
