@@ -246,7 +246,7 @@ class FNN(object):
             y_indices = y
             
         unique_classes, class_counts = np.unique(y_indices, return_counts=True)
-        print(f"Class distribution: {dict(zip(unique_classes, class_counts))}")
+        # print(f"Class distribution: {dict(zip(unique_classes, class_counts))}")
         
         class_weights = compute_class_weight('balanced', classes=unique_classes, y=y_indices)
         class_weight_dict = dict(zip(unique_classes, class_weights))
@@ -287,6 +287,8 @@ class FNN(object):
         save_interval = x.shape[0] / self.batch_size * 5 
         print('Save interval', save_interval)
 
+        print('')
+        print('Start Training...')
         print('Initializing cluster centers with k-means.')
         kmeans = KMeans(n_clusters=self.n_clusters, n_init=20)
         y_pred = kmeans.fit_predict(self.encoder.predict(x))
@@ -334,7 +336,9 @@ class FNN(object):
                               L=loss[0], Lc=loss[1], Ls=loss[2])
                 logwriter.writerow(logdict)
                 print('Iter', ite,': Cluster Loss', loss[1], ', Sentiment Loss', loss[2] , ', Acc_sentiment', np.round(acc_sentiment, 5), '; loss=', loss)
-
+                print('')
+                print('')
+                
                 if ite > 0 and delta_label < tol:
                     print('delta_label ', delta_label, '< tol ', tol)
                     print('Reached tolerance threshold. Stopping training.')
@@ -394,7 +398,7 @@ class FNN(object):
                     index += 1
             
             if ite % save_interval == 0:
-                print('saving model to:', save_dir + '/FNN_model_' + str(ite) + '.weights' + '.h5')
+                # print('saving model to:', save_dir + '/FNN_model_' + str(ite) + '.weights' + '.h5')
                 self.model.save_weights(save_dir + '/FNN_model_' + str(ite) + '.weights' + '.h5')
         
         logfile.close()
