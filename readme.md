@@ -2,6 +2,11 @@
 
 This project implements a **Fully Neural Network (FNN)** combined with **BERT embeddings** for sentiment analysis and topic clustering.
 
+## Model Architecture
+
+![FNN_Beta Architecture](architecture.png)
+
+
 ## Installation and Setup
 
 1. Clone the repository:
