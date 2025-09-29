@@ -13,7 +13,7 @@ import logging
 import numpy as np
 import pandas as pd
 import torch
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 from collections import Counter
 
 from keras.models import Model
@@ -499,24 +499,11 @@ class FNN:
 
         # Training loop
         logger.info("Starting training loop...")
-        
-        # Calculate number of updates and progress tracking
-        num_updates = int(maxiter / update_interval)
-        current_update = 0
-        
-        pbar_epoch = tqdm(total=num_updates, desc="Epoch", position=0, leave=True, ncols=100)
-        pbar_iter = tqdm(total=update_interval, desc="Iteration", position=1, leave=False, ncols=100)
+        pbar = tqdm(range(int(maxiter)), desc="Training", ncols=120)
 
-        for ite in range(int(maxiter)):
+        for ite in pbar:
             # Update target distribution
             if ite % update_interval == 0:
-                # Reset iteration progress bar
-                pbar_iter.reset()
-                pbar_iter.set_description(f"Iteration (Epoch {current_update + 1}/{num_updates})")
-                
-                if ite > 0:
-                    current_update += 1
-                    pbar_epoch.update(1)
                 q, s_pred = self.model.predict(x, verbose=0)
                 p = self.target_distribution(q)
 
@@ -530,17 +517,13 @@ class FNN:
                     sentiment_true_label = y_sentiment.argmax(1) if len(y_sentiment.shape) > 1 else y_sentiment
                     acc_sentiment = np.mean(s_pred_label == sentiment_true_label)
 
-                    # Per-class accuracy
+                    # Per-class accuracy - only log to file, not to console
                     if len(np.unique(sentiment_true_label)) > 1:
                         class_accs = {}
                         for cls in np.unique(sentiment_true_label):
                             cls_mask = sentiment_true_label == cls
                             cls_acc = np.mean((s_pred_label == sentiment_true_label) & cls_mask) / np.mean(cls_mask)
                             class_accs[self.class_labels[cls]] = cls_acc
-                        
-                        # Print class accuracies cleanly
-                        class_acc_str = ' | '.join([f"{k}: {v:.4f}" for k, v in class_accs.items()])
-                        tqdm.write(f"Class Acc: {class_acc_str}")
                 else:
                     acc_sentiment = 0
                     class_accs = {}
@@ -564,9 +547,13 @@ class FNN:
                     'Ls': f'{loss[2]:.4f}',
                     'Acc': f'{acc_sentiment:.4f}',
                     'Δ': f'{delta_label:.4f}'
-                }, refresh=False)
-                
-                tqdm.write("")  # Add newline after metrics
+                }, refresh=True)
+
+                # Log detailed info only every few updates to avoid clutter
+                if ite % (update_interval * 5) == 0 and ite > 0:
+                    if class_accs:
+                        class_acc_str = ', '.join([f"{k}: {v:.4f}" for k, v in class_accs.items()])
+                        logger.info(f"Iter {ite} - Class accuracies: {class_acc_str}")
 
                 # Early stopping
                 if ite > 0 and delta_label < tol:
@@ -615,4 +602,3 @@ class FNN:
         final_path = save_path / 'FNN_model_final.weights.h5'
         self.model.save_weights(str(final_path))
         logger.info(f"Training complete. Final model saved to: {final_path}")
-        logger.info("=" * 80)
