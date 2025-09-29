@@ -546,7 +546,6 @@ class FNN:
                     'Lc': f'{loss[1]:.4f}',
                     'Ls': f'{loss[2]:.4f}',
                     'Acc': f'{acc_sentiment:.4f}',
-                    'Δ': f'{delta_label:.4f}'
                 }, refresh=True)
 
                 # Log detailed info only every few updates to avoid clutter
