@@ -517,16 +517,16 @@ class FNN:
                     sentiment_true_label = y_sentiment.argmax(1) if len(y_sentiment.shape) > 1 else y_sentiment
                     acc_sentiment = np.mean(s_pred_label == sentiment_true_label)
 
-                    # Per-class accuracy
+                    # Per-class accuracy - only log to file, not to console
                     if len(np.unique(sentiment_true_label)) > 1:
-                        class_accs = []
+                        class_accs = {}
                         for cls in np.unique(sentiment_true_label):
                             cls_mask = sentiment_true_label == cls
                             cls_acc = np.mean((s_pred_label == sentiment_true_label) & cls_mask) / np.mean(cls_mask)
-                            class_accs.append(f"{self.class_labels[cls]}: {cls_acc:.4f}")
-                        pbar.write(f"  Class accuracies - {', '.join(class_accs)}")
+                            class_accs[self.class_labels[cls]] = cls_acc
                 else:
                     acc_sentiment = 0
+                    class_accs = {}
 
                 # Log metrics
                 loss_rounded = np.round(loss, 5)
@@ -547,7 +547,13 @@ class FNN:
                     'Ls': f'{loss[2]:.4f}',
                     'Acc': f'{acc_sentiment:.4f}',
                     'Δ': f'{delta_label:.4f}'
-                })
+                }, refresh=True)
+
+                # Log detailed info only every few updates to avoid clutter
+                if ite % (update_interval * 5) == 0 and ite > 0:
+                    if class_accs:
+                        class_acc_str = ', '.join([f"{k}: {v:.4f}" for k, v in class_accs.items()])
+                        logger.info(f"Iter {ite} - Class accuracies: {class_acc_str}")
 
                 # Early stopping
                 if ite > 0 and delta_label < tol:
