@@ -28,95 +28,7 @@ from sklearn.utils.class_weight import compute_class_weight
 
 from transformers import AutoTokenizer, AutoModel
 
-# Assuming .DEC contains the following:
-# 1. cluster_acc function
-# 2. ClusteringLayer class (Keras layer)
-# 3. autoencoder function (Keras model builder)
-# from .DEC import cluster_acc, ClusteringLayer, autoencoder
-
-# Since I cannot access the content of .DEC, I will add placeholder classes/functions
-# to make the provided code structurally runnable and complete, as an MWE (Minimal Working Example),
-# while respecting the prompt's intent to keep the provided FNN code intact.
-
-# =============================================================================
-# Placeholder for .DEC components (MWE only)
-# =============================================================================
-def cluster_acc(y_true, y_pred):
-    """Placeholder for cluster accuracy calculation."""
-    return 0.0
-
-class ClusteringLayer(Dense):
-    """
-    Placeholder for the Clustering Layer (Keras).
-    Original function: implements student's t-distribution for soft assignments.
-    """
-    def __init__(self, n_clusters, weights=None, alpha=1.0, **kwargs):
-        super(ClusteringLayer, self).__init__(n_clusters, **kwargs)
-        self.n_clusters = n_clusters
-        self.alpha = alpha
-        self.initial_weights = weights
-        self.input_spec = [K.layers.InputSpec(ndim=2)]
-
-    def build(self, input_shape):
-        super(ClusteringLayer, self).build(input_shape)
-        if self.initial_weights is not None:
-            self.set_weights(self.initial_weights)
-            del self.initial_weights
-
-    def call(self, inputs, **kwargs):
-        """
-        Student t-distribution, as the soft assignment.
-        $q_{ij} = \frac{(1+||z_i-\mu_j||^2/\alpha)^{-(\alpha+1)/2}}{\sum_{j'}(1+||z_i-\mu_{j'}||^2/\alpha)^{-(\alpha+1)/2}}$
-        """
-        q = 1.0 / (1.0 + (K.sum(K.square(K.expand_dims(inputs, axis=1) - self.weights[0]), axis=2) / self.alpha))
-        q **= (self.alpha + 1.0) / 2.0
-        q = K.transpose(K.transpose(q) / K.sum(q, axis=1))
-        return q
-
-    def compute_output_shape(self, input_shape):
-        return (input_shape[0], self.n_clusters)
-
-    def get_config(self):
-        config = {'n_clusters': self.n_clusters}
-        base_config = super(ClusteringLayer, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
-
-def autoencoder(dims, act='relu', init='glorot_uniform'):
-    """
-    Placeholder for the Autoencoder model builder (Keras).
-    Original function: Builds a deep autoencoder for pre-training.
-    """
-    n_stacks = len(dims) - 1
-    
-    # Input
-    x_in = K.layers.Input(shape=(dims[0],), name='input')
-    x = x_in
-    
-    # Encoder
-    for i in range(n_stacks):
-        x = Dense(dims[i+1], kernel_initializer=init, name=f'encoder_{i}')(x)
-        if i < n_stacks - 1:
-            x = Activation(act)(x)
-            x = BatchNormalization()(x)
-            x = Dropout(0.2)(x)
-    
-    # Latent layer is the output of the last encoder layer
-    latent = x
-    
-    # Decoder
-    for i in range(n_stacks - 1, 0, -1):
-        x = Dense(dims[i], kernel_initializer=init, name=f'decoder_{i}')(x)
-        x = Activation(act)(x)
-        x = BatchNormalization()(x)
-        x = Dropout(0.2)(x)
-
-    # Output
-    x = Dense(dims[0], kernel_initializer=init, name='decoder_0')(x)
-    x_out = Activation('sigmoid', name='output')(x) # Standard for autoencoder reconstruction loss
-
-    return Model(inputs=x_in, outputs=x_out, name='AE')
-# =============================================================================
-
+from .DEC import cluster_acc, ClusteringLayer, autoencoder
 
 # Configure logging
 logging.basicConfig(
@@ -298,11 +210,10 @@ class FNN:
             ).to(device)
 
             with torch.no_grad():
-                if not callable(bert_model) or isinstance(bert_model, str):
+                if not callable(bert_model):
                     bert_model = AutoModel.from_pretrained(model_name).to(device)
                 else:
-                    # If bert_model is an instance of AutoModel, use it directly
-                    pass
+                    bert_model = AutoModel.from_pretrained("indolem/indobert-base-uncased")
                 
                 outputs = bert_model(**tokens)
             
@@ -520,7 +431,7 @@ class FNN:
         tol: float = 1e-3,
         update_interval: int = 140,
         maxiter: int = 20000,
-        save_dir: str = './results/fnnjst'
+        save_dir: str = './results'
     ) -> None:
         """
         Train the joint clustering and sentiment analysis model.
@@ -611,12 +522,8 @@ class FNN:
                         class_accs = {}
                         for cls in np.unique(sentiment_true_label):
                             cls_mask = sentiment_true_label == cls
-                            # Correct calculation for class-wise accuracy
-                            if np.sum(cls_mask) > 0:
-                                cls_acc = np.mean(s_pred_label[cls_mask] == sentiment_true_label[cls_mask])
-                                class_accs[self.class_labels[cls]] = cls_acc
-                            else:
-                                class_accs[self.class_labels[cls]] = 0.0
+                            cls_acc = np.mean((s_pred_label == sentiment_true_label) & cls_mask) / np.mean(cls_mask)
+                            class_accs[self.class_labels[cls]] = cls_acc
                 else:
                     acc_sentiment = 0
                     class_accs = {}
@@ -625,9 +532,9 @@ class FNN:
                 loss_rounded = np.round(loss, 5)
                 logdict = {
                     'iter': ite,
-                    'acc_cluster': 0, # Placeholder for actual cluster metrics if y_true is available
-                    'nmi': 0,         # Placeholder
-                    'ari': 0,         # Placeholder
+                    'acc_cluster': 0,
+                    'nmi': 0,
+                    'ari': 0,
                     'acc_sentiment': round(acc_sentiment, 5),
                     'L': loss_rounded[0],
                     'Lc': loss_rounded[1],
@@ -670,11 +577,9 @@ class FNN:
                 # Compute sample weights
                 cluster_weights = np.full(batch_p.shape[0], self.gamma)
                 if sentiment_class_weights:
-                    # Get the class index for each sample in the batch
-                    batch_y_indices = np.argmax(batch_y, axis=1)
                     sentiment_weights = np.array([
                         self.eta * sentiment_class_weights[label]
-                        for label in batch_y_indices
+                        for label in np.argmax(batch_y, axis=1)
                     ])
                 else:
                     sentiment_weights = np.full(batch_y.shape[0], self.eta)
